@@ -141,7 +141,8 @@
       <div class="passage-meta"><span>約 ${d.minutes} 分鐘 · ${d.chapters} 章</span>${pill(status)}</div>
       ${d.note ? `<div class="small muted" style="margin-top:8px">${esc(d.note)}</div>` : ''}
       ${d.link ? `<a class="course-link" href="${esc(d.link)}" target="_blank" rel="noopener">打開今天的課程 →</a>` : ''}
-      <div class="actions"><button class="btn block ghost" id="startBtn">${READ.includes(status) ? '再讀一次' : '開始讀經'}</button></div></div>`;
+      <div class="actions"><button class="btn block ghost" id="startBtn">${READ.includes(status) ? '再讀一次' : '開始讀經'}</button></div>
+      ${videosHtml(d)}</div>`;
     h += `<div class="card reader hidden" id="reader"></div>`;
     h += `<div class="timer hidden" id="timer"></div>`;
     h += `<div id="checkinArea">${checkinHtml(day, status)}</div>`;
@@ -153,6 +154,24 @@
     $('#startBtn').addEventListener('click', () => openReader(day));
     bindCheckin(day);
     if (params.get('read') === '1') { params.delete('read'); openReader(day); }
+  }
+
+  // One 「陪你讀聖經」 video per chapter of the day (table from tools/fetch_videos.py).
+  function videosHtml(d) {
+    // A phone may still have an older cached index.html without js/videos.js: skip videos, keep the page working.
+    if (typeof Videos === 'undefined') return '';
+    const rows = [];
+    Core.parseRefs(d.refs).forEach(r => {
+      for (let c = r.from; c <= r.to; c++) {
+        const v = Videos[r.book + '.' + c];
+        if (!v) continue;
+        rows.push(`<a class="video-link" href="https://www.youtube.com/watch?v=${esc(v[0])}" target="_blank" rel="noopener">
+          <span class="video-play">▶</span>
+          <span class="video-text"><b>${esc(Books.get(r.book).name)} ${c}</b><span>${esc(v[2])}</span></span>
+          <span class="video-len">${esc(v[1])}</span></a>`);
+      }
+    });
+    return rows.length ? `<div class="videos"><div class="videos-h">陪你讀聖經・影片</div>${rows.join('')}</div>` : '';
   }
 
   // This week's Sunday service: the reading leads up to it.

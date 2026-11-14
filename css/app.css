@@ -128,6 +128,16 @@ main { max-width: 560px; margin: 0 auto; padding: 4px 16px 24px; }
 .notice .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .actions { display: grid; gap: 10px; margin-top: 14px; }
 .course-link { display: block; margin-top: 10px; color: var(--primary); }
+.videos { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+.videos-h { font-size: 13px; color: var(--ink-3); letter-spacing: .08em; }
+.video-link { display: flex; align-items: center; gap: 12px; padding: 10px 0; color: var(--ink); text-decoration: none; }
+.video-link + .video-link { border-top: 1px dashed var(--line); }
+.video-play { flex: none; width: 36px; height: 26px; border-radius: 8px; display: grid; place-items: center;
+              background: var(--seal); color: #fff; font-size: 11px; }
+.video-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.video-text b { font-size: 15px; font-weight: 600; }
+.video-text span { font-size: 13px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.video-len { flex: none; font-family: var(--num); font-size: 13px; color: var(--ink-3); }
 .sermon-theme { font-size: 20px; font-weight: 600; line-height: 1.4; margin-bottom: 2px; }
 
 /* reader */
