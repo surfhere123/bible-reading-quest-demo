@@ -43,14 +43,15 @@ var Api = (function () {
     };
   }
 
-  function fakeMembers(total, todayDay) {
+  function fakeMembers(total, todayDay, mask) {
     const rnd = prng(20270101);
     return NAMES.map((name, i) => {
       const diligence = 0.35 + rnd() * 0.63;
       const quitAt = rnd() < 0.15 ? Math.floor(rnd() * 20) + 3 : Infinity;
-      let rec = Core.emptyRecord(total);
+      let rec = Core.normalizeRecord('', total, mask);
       for (let d = 1; d <= Math.min(todayDay, total); d++) {
         if (d >= quitAt) break;
+        if (mask.charAt(d - 1) === '-') continue;
         const p = d === todayDay ? diligence * 0.55 : diligence;
         if (rnd() > p) continue;
         const r = rnd();
@@ -62,19 +63,21 @@ var Api = (function () {
     });
   }
 
-  // A history that shows every stamp type around day 25: one late read (day 14) breaks the streak,
-  // day 22 is waiting for a makeup, today is still open.
-  function demoRecord(total, todayDay) {
-    let rec = Core.emptyRecord(total);
-    const set = (d, s) => { if (d <= total && d < todayDay) rec = rec.slice(0, d - 1) + s + rec.slice(d); };
-    for (let d = 1; d < todayDay; d++) set(d, 'o');
-    set(9, 'm'); set(14, 'l'); set(22, '.');
+  // A history that shows every stamp type: the 6th reading day was made up, the 10th was read late
+  // (which broke the streak), the reading day before yesterday's is waiting for a makeup, today is open.
+  function demoRecord(total, todayDay, mask) {
+    let rec = Core.normalizeRecord('', total, mask);
+    const reading = [];
+    for (let d = 1; d < Math.min(todayDay, total + 1); d++) if (mask.charAt(d - 1) !== '-') reading.push(d);
+    const set = (d, s) => { if (d) rec = rec.slice(0, d - 1) + s + rec.slice(d); };
+    reading.forEach(d => set(d, 'o'));
+    set(reading[5], 'm'); set(reading[9], 'l'); set(reading[reading.length - 2], '.');
     return rec;
   }
 
   function mock(opts) {
     opts = opts || {};
-    const today = opts.date || '2027-01-25';
+    const today = opts.date || '2027-01-27';
     const key = 'brq-mock:' + today + (opts.fresh ? ':fresh' : '');
     let plan = null;
     let members = null;
@@ -94,20 +97,22 @@ var Api = (function () {
       async bootstrap() {
         plan = await (await fetch('data/plan.json')).json();
         const total = plan.days.length;
-        members = fakeMembers(total, todayDay());
+        const mask = Core.restMask(plan.days.map(d => d.chapters));
+        members = fakeMembers(total, todayDay(), mask);
         const saved = load();
         if (saved) {
           me = saved.me; questions = saved.questions || [];
         } else if (opts.fresh) {
-          me = { id: 'me', name: '示範會友', group: '', anonymous: false, quietMinutes: 10, record: Core.emptyRecord(total), joined: false,
+          me = { id: 'me', name: '示範會友', group: '', anonymous: false, quietMinutes: 10, record: '', joined: false,
             fromDay: Math.min(Math.max(todayDay(), 1), total) };
         } else {
-          me = { id: 'me', name: '示範會友', group: '青年團契', anonymous: false, quietMinutes: 10, record: demoRecord(total, todayDay()), joined: true, fromDay: 1 };
+          me = { id: 'me', name: '示範會友', group: '青年團契', anonymous: false, quietMinutes: 10, record: demoRecord(total, todayDay(), mask), joined: true, fromDay: 1 };
           questions = [{
-            day: 3, text: '創世記 6 章的「神的兒子們」和「人的女子們」是指誰？', shared: true, at: Core.dateOfDay(plan.start, 3),
-            reply: '這段有幾種解釋，主日後我們在小組一起討論，先別卡在這裡，繼續往下讀就好。', answered: true,
+            day: 5, text: '太 5 章說「虛心的人有福了」，虛心是什麼意思？', shared: true, at: Core.dateOfDay(plan.start, 5),
+            reply: '這段很值得多想一下，主日後我們在小組一起聊聊，先繼續往下讀就好。', answered: true,
           }];
         }
+        me.record = Core.normalizeRecord(me.record, total, mask);
         await wait(200);
         return { today: today, plan: plan, groups: GROUPS, me: me, questions: questions };
       },

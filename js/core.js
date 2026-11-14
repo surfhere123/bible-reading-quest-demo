@@ -5,6 +5,8 @@
 // - Plan days are 1-based. `todayDay` is the plan day number of today (may be <= 0 before launch).
 // - A member's history is a record string with one char per plan day:
 //     '.' not read   'o' on time   'm' makeup within MAKEUP_WINDOW days   'l' late (read after the window)
+//     '-' rest day: nothing to read (補讀日 / 主日). Comes from the plan via restMask() + normalizeRecord();
+//         rest days never count as pending/missed, never break a streak and are left out of completion.
 // - `fromDay` is the plan day a member joined (default 1). Unread days before it are 'before':
 //   they never count as pending/missed and are left out of streaks and completion rates.
 var Core = (function () {
@@ -62,13 +64,33 @@ var Core = (function () {
 
   // ---------- record string ----------
   function emptyRecord(totalDays) { return new Array(totalDays + 1).join('.'); }
-  function normalizeRecord(record, totalDays) {
+  // dayChapters: array indexed by day-1 -> chapters to read that day. 0 means a rest day.
+  function restMask(dayChapters) {
+    return dayChapters.map(function (n) { return n > 0 ? '.' : '-'; }).join('');
+  }
+  // Pad/trim to the plan length and apply the rest-day mask (stamps are always kept, so a plan
+  // change never loses a member's reading).
+  function normalizeRecord(record, totalDays, mask) {
     record = record || '';
     if (record.length < totalDays) record += emptyRecord(totalDays - record.length);
-    return record.slice(0, totalDays);
+    record = record.slice(0, totalDays);
+    if (!mask) return record;
+    var out = '';
+    for (var i = 0; i < totalDays; i++) {
+      var c = record.charAt(i);
+      if (mask.charAt(i) === '-') out += isRead(c) ? c : '-';
+      else out += c === '-' ? '.' : c;
+    }
+    return out;
   }
   function stampAt(record, day) { return record.charAt(day - 1) || '.'; }
   function isRead(ch) { return ch === 'o' || ch === 'm' || ch === 'l'; }
+  function isRest(ch) { return ch === '-'; }
+  function readingDays(record) {
+    var n = 0;
+    for (var i = 0; i < record.length; i++) if (record.charAt(i) !== '-') n++;
+    return n;
+  }
 
   function classify(lagDays) {
     if (lagDays <= 0) return 'o';
@@ -83,6 +105,7 @@ var Core = (function () {
     if (day < 1 || day > totalDays) return { ok: false, error: 'out-of-range' };
     if (day > todayDay) return { ok: false, error: 'future' };
     if (isRead(stampAt(record, day))) return { ok: false, error: 'already', stamp: stampAt(record, day) };
+    if (isRest(stampAt(record, day))) return { ok: false, error: 'rest' };
     var stamp = classify(todayDay - day);
     return { ok: true, stamp: stamp, record: record.slice(0, day - 1) + stamp + record.slice(day) };
   }
@@ -93,6 +116,7 @@ var Core = (function () {
     if (s === 'o') return 'ontime';
     if (s === 'm') return 'makeup';
     if (s === 'l') return 'late';
+    if (s === '-') return 'rest';
     if (day > todayDay) return 'future';
     if (day === todayDay) return 'today';
     if (day < (fromDay || 1)) return 'before';
@@ -100,8 +124,8 @@ var Core = (function () {
     return 'missed';
   }
 
-  // Streak rules: on-time and makeup days count; an unread day inside the makeup window is
-  // "pending" and neither counts nor breaks; today never breaks; an unread day past the window,
+  // Streak rules: on-time and makeup days count; rest days and unread days inside the makeup
+  // window ("pending") neither count nor break; today never breaks; an unread day past the window,
   // or a late ('l') day, breaks the run.
   function streak(record, todayDay, fromDay) {
     var run = 0;
@@ -110,6 +134,7 @@ var Core = (function () {
     var last = Math.min(todayDay, record.length);
     for (var d = fromDay || 1; d <= last; d++) {
       var s = stampAt(record, d);
+      if (s === '-') continue;
       if (s === 'o' || s === 'm') {
         run++;
       } else if (s === '.' && (d === todayDay || todayDay - d <= MAKEUP_WINDOW)) {
@@ -122,9 +147,11 @@ var Core = (function () {
     return { current: run, longest: longest, pending: pending };
   }
 
-  // done counts every read day (also ones before joining); elapsed only counts days since joining.
+  // done counts every read day (also ones before joining); elapsed only counts reading days since joining.
   function completion(record, todayDay, fromDay) {
-    var elapsed = Math.max(0, Math.min(todayDay, record.length) - (fromDay || 1) + 1);
+    var elapsed = 0;
+    var last = Math.min(todayDay, record.length);
+    for (var e = fromDay || 1; e <= last; e++) if (!isRest(stampAt(record, e))) elapsed++;
     var done = 0;
     for (var d = 1; d <= record.length; d++) if (isRead(stampAt(record, d))) done++;
     return { done: done, elapsed: elapsed, rate: elapsed ? Math.min(1, done / elapsed) : 0 };
@@ -139,19 +166,21 @@ var Core = (function () {
     return out;
   }
 
-  // Stamp cards of CARD_SIZE plan days each.
+  // Stamp cards of CARD_SIZE plan days each; rest days sit on the card but need no stamp.
   function cards(record, todayDay, fromDay) {
     var out = [];
     for (var from = 1; from <= record.length; from += CARD_SIZE) {
       var to = Math.min(from + CARD_SIZE - 1, record.length);
       var slots = [];
-      var full = true;
+      var goal = 0;
+      var filled = 0;
       for (var d = from; d <= to; d++) {
-        var st = dayStatus(record, d, todayDay, fromDay);
-        if (!isRead(stampAt(record, d))) full = false;
-        slots.push({ day: d, status: st });
+        var c = stampAt(record, d);
+        if (!isRest(c)) goal++;
+        if (isRead(c)) filled++;
+        slots.push({ day: d, status: dayStatus(record, d, todayDay, fromDay) });
       }
-      out.push({ index: out.length + 1, from: from, to: to, slots: slots, full: full });
+      out.push({ index: out.length + 1, from: from, to: to, slots: slots, goal: goal, filled: filled, full: filled >= goal });
     }
     return out;
   }
@@ -159,13 +188,13 @@ var Core = (function () {
   // ---------- badges ----------
   var BADGES = [
     { id: 'total-1', kind: 'total', n: 1, name: '第一步', desc: '第一次打卡' },
-    { id: 'total-7', kind: 'total', n: 7, name: '一週同行', desc: '累積讀完 7 天' },
-    { id: 'total-21', kind: 'total', n: 21, name: '習慣養成', desc: '累積讀完 21 天' },
+    { id: 'total-5', kind: 'total', n: 5, name: '一週同行', desc: '累積讀完 5 天' },
+    { id: 'total-15', kind: 'total', n: 15, name: '習慣養成', desc: '累積讀完 15 天（3 週）' },
     { id: 'total-50', kind: 'total', n: 50, name: '五十天', desc: '累積讀完 50 天' },
     { id: 'total-100', kind: 'total', n: 100, name: '百日', desc: '累積讀完 100 天' },
     { id: 'total-200', kind: 'total', n: 200, name: '兩百天', desc: '累積讀完 200 天' },
-    { id: 'total-all', kind: 'total', n: 'all', name: '讀完全本', desc: '讀完 52 週全部進度' },
-    { id: 'streak-7', kind: 'streak', n: 7, name: '連勝 7 天', desc: '最長連勝達 7 天' },
+    { id: 'total-all', kind: 'total', n: 'all', name: '全部讀完', desc: '讀完 52 週全部進度' },
+    { id: 'streak-10', kind: 'streak', n: 10, name: '連勝 10 天', desc: '最長連勝達 10 天' },
     { id: 'streak-30', kind: 'streak', n: 30, name: '連勝 30 天', desc: '最長連勝達 30 天' },
     { id: 'streak-100', kind: 'streak', n: 100, name: '連勝 100 天', desc: '最長連勝達 100 天' },
   ];
@@ -184,7 +213,7 @@ var Core = (function () {
     var st = streak(record, todayDay, fromDay);
     var earned = [];
     BADGES.forEach(function (b) {
-      var n = b.n === 'all' ? record.length : b.n;
+      var n = b.n === 'all' ? readingDays(record) : b.n;
       var value = b.kind === 'total' ? comp.done : st.longest;
       if (value >= n) earned.push(b.id);
     });
@@ -264,29 +293,39 @@ var Core = (function () {
     }).sort(function (a, b) { return b.rate - a.rate || b.members - a.members; });
   }
 
+  // Last reading day before `todayDay` (skips rest days), or 0 if there is none.
+  function prevReadingDay(dayChapters, todayDay) {
+    for (var d = Math.min(todayDay, dayChapters.length + 1) - 1; d >= 1; d--) if (dayChapters[d - 1] > 0) return d;
+    return 0;
+  }
+
   // dayChapters: array indexed by day-1 -> number of chapters that day.
+  // readersPrev counts members who read the previous reading day (Friday's, on a Monday).
   function churchTotals(members, dayChapters, todayDay) {
     var chapters = 0;
     var today = 0;
-    var yesterday = 0;
+    var prevReaders = 0;
+    var prev = prevReadingDay(dayChapters, todayDay);
     members.forEach(function (m) {
       for (var d = 1; d <= m.record.length; d++) {
         if (isRead(stampAt(m.record, d))) chapters += dayChapters[d - 1] || 0;
       }
       if (todayDay >= 1 && isRead(stampAt(m.record, todayDay))) today++;
-      if (todayDay >= 2 && isRead(stampAt(m.record, todayDay - 1))) yesterday++;
+      if (prev && isRead(stampAt(m.record, prev))) prevReaders++;
     });
     var all = dayChapters.reduce(function (s, n) { return s + n; }, 0);
-    return { chapters: chapters, readersToday: today, readersYesterday: yesterday, members: members.length, planChapters: all };
+    return { chapters: chapters, readersToday: today, prevDay: prev, readersPrev: prevReaders, members: members.length, planChapters: all };
   }
 
-  // Members with CARE_GAP or more unread days in a row up to yesterday (today is never counted).
+  // Members with CARE_GAP or more unread reading days in a row up to yesterday (today and rest days never count).
   function needsCare(members, todayDay) {
     var out = [];
     members.forEach(function (m) {
       var gap = 0;
       for (var d = todayDay - 1; d >= (m.fromDay || 1); d--) {
-        if (isRead(stampAt(m.record, d))) break;
+        var c = stampAt(m.record, d);
+        if (isRest(c)) continue;
+        if (isRead(c)) break;
         gap++;
       }
       if (gap >= CARE_GAP) out.push({ id: m.id, name: m.name, group: m.group, gap: gap });
@@ -299,7 +338,8 @@ var Core = (function () {
     addDays: addDays, daysBetween: daysBetween, dayNumber: dayNumber, dateOfDay: dateOfDay, weekday: weekday,
     parseRefs: parseRefs, formatRefs: formatRefs, chapterCount: chapterCount, groupsOf: groupsOf,
     readingMinutes: readingMinutes,
-    emptyRecord: emptyRecord, normalizeRecord: normalizeRecord, stampAt: stampAt, isRead: isRead,
+    emptyRecord: emptyRecord, restMask: restMask, normalizeRecord: normalizeRecord, stampAt: stampAt,
+    isRead: isRead, isRest: isRest, readingDays: readingDays, prevReadingDay: prevReadingDay,
     checkin: checkin, dayStatus: dayStatus, streak: streak, completion: completion, missedDays: missedDays,
     cards: cards, badges: badges, badgeDefs: badgeDefs,
     summarize: summarize, streakBoard: streakBoard, groupBoard: groupBoard, churchTotals: churchTotals,

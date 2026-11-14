@@ -11,8 +11,8 @@
   };
   const READ = ['ontime', 'makeup', 'late'];
   const BADGE_ICON = {
-    'total-1': '🌱', 'total-7': '📖', 'total-21': '🔁', 'total-50': '⭐', 'total-100': '💯', 'total-200': '⛰️', 'total-all': '🏆',
-    'streak-7': '🔥', 'streak-30': '🔥', 'streak-100': '🔥',
+    'total-1': '🌱', 'total-5': '📖', 'total-15': '🔁', 'total-50': '⭐', 'total-100': '💯', 'total-200': '⛰️', 'total-all': '🏆',
+    'streak-10': '🔥', 'streak-30': '🔥', 'streak-100': '🔥',
   };
 
   let params = new URLSearchParams(location.search);
@@ -29,6 +29,10 @@
   const curDay = () => clampDay(S.todayDay);
   const isReadDay = d => Core.isRead(Core.stampAt(S.me.record, d));
   const F = () => S.me.fromDay || 1; // plan day the member joined
+  const wd1 = date => '日一二三四五六'.charAt(Core.weekday(date));
+  const dname = day => md(S.days[day - 1].date) + '（' + wd1(S.days[day - 1].date) + '）';
+  const SCOPE = () => (S.plan.scope || '全本') + '進度';
+  const isRestDay = day => !S.days[day - 1].chapters;
 
   function toast(msg, ms) {
     $$('.toast').forEach(t => t.remove());
@@ -61,7 +65,9 @@
     S.todayDay = Core.dayNumber(S.start, S.today);
     S.groups = b.groups || [];
     S.me = b.me;
-    S.me.record = Core.normalizeRecord(S.me.record, S.total);
+    S.mask = Core.restMask(S.days.map(d => d.chapters));
+    S.me.record = Core.normalizeRecord(S.me.record, S.total, S.mask);
+    S.readingTotal = S.plan.readingDays || S.days.filter(d => d.chapters).length;
     S.questions = b.questions || [];
     S.refs = S.days.map(d => Core.parseRefs(d.refs));
     S.dayGroups = S.refs.map(r => Core.groupsOf(r, Books));
@@ -94,7 +100,7 @@
     let h = '';
 
     h += `<div class="hero"><div><div class="date">${md(d.date)}</div>
-      <div class="meta">${wd(d.date)}・第 ${d.week} 週第 ${d.dow} 天 · Day ${day}/${S.total}</div></div>
+      <div class="meta">${wd(d.date)}・第 ${d.week} 週 · ${d.chapters ? `進度 ${d.seq}/${S.readingTotal}` : esc(d.label)}</div></div>
       <div class="streak"><div class="n">${st.current}</div><div class="l">🔥 連勝天數</div></div></div>`;
 
     if (td < 1) {
@@ -103,20 +109,34 @@
     } else if (td > S.total) {
       const comp = Core.completion(S.me.record, S.total, F());
       h += `<div class="card notice"><b>52 週讀經結束了！</b>
-        <div class="small muted">你一共讀完 ${comp.done} 天（${pct(comp.rate)}）。還沒讀的部分，現在補還是會算進全本進度。</div></div>`;
-    } else if (!isToday && day < td) {
-      h += `<div class="card notice"><b>正在補讀第 ${day} 天（${md(d.date)}）</b>
-        <div class="small muted">${status === 'before' ? '這是你加入前的進度，不讀也不影響連勝；讀了會計入全本進度。'
-          : status === 'missed' ? '已經超過 7 天，補完會計入全本進度，但不會救回連勝。' : '7 天內補完，連勝不會斷。'}</div>
+        <div class="small muted">你一共讀完 ${comp.done} 天（${pct(comp.rate)}）。還沒讀的部分，現在補還是會算進${SCOPE()}。</div></div>`;
+    } else if (!isToday && day < td && status !== 'rest') {
+      h += `<div class="card notice"><b>正在補讀 ${dname(day)} 的進度</b>
+        <div class="small muted">${status === 'before' ? '這是你加入前的進度，不讀也不影響連勝；讀了會計入' + SCOPE() + '。'
+          : status === 'missed' ? '已經超過 7 天，補完會計入' + SCOPE() + '，但不會救回連勝。' : '7 天內補完，連勝不會斷。'}</div>
         <div class="chips"><button class="chip" data-go="#today">回到今天</button></div></div>`;
     }
     if (isToday && st.pending.length) {
       h += `<div class="card notice"><b>有 ${st.pending.length} 天待補讀</b>
         <div class="small muted">7 天內補完，連勝不會斷。</div>
-        <div class="chips">${st.pending.map(p => `<button class="chip warn" data-go="#today/${p}">${md(S.days[p - 1].date)}・第 ${p} 天</button>`).join('')}</div></div>`;
+        <div class="chips">${st.pending.map(p => `<button class="chip warn" data-go="#today/${p}">${dname(p)}</button>`).join('')}</div></div>`;
     }
 
-    h += `<div class="card"><h2>${isToday ? '今日進度' : '第 ' + day + ' 天進度'}</h2>
+    if (status === 'rest') {
+      let next = 0;
+      for (let n = day + 1; n <= S.total; n++) if (!isRestDay(n)) { next = n; break; }
+      const why = d.dow === 7 ? '今天主日，到教會聽道吧！講道經文就在這週讀過的章節裡。'
+        : d.dow === 6 ? '今天沒有新進度，把這週還沒讀的補完吧。' : '這週的進度已經讀完了，可以補讀或預習。';
+      h += `<div class="card"><h2>${isToday ? '今天' : dname(day)}是${esc(d.label)}</h2>
+        <div class="muted">${why}</div>
+        ${next ? `<div class="actions"><button class="btn block ghost btn-sm" data-go="#today/${next}">預習 ${dname(next)}${esc(S.days[next - 1].label)}</button></div>` : ''}</div>`;
+      h += sermonHtml(d);
+      view.innerHTML = `<div class="view">${h}</div>`;
+      $$('[data-go]', view).forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
+      return;
+    }
+
+    h += `<div class="card"><h2>${isToday ? '今日進度' : dname(day) + '的進度'}</h2>
       <div class="passage-title"><span class="mark">${esc(d.label)}</span></div>
       <div class="passage-meta"><span>約 ${d.minutes} 分鐘 · ${d.chapters} 章</span>${pill(status)}</div>
       ${d.note ? `<div class="small muted" style="margin-top:8px">${esc(d.note)}</div>` : ''}
@@ -125,6 +145,7 @@
     h += `<div class="card reader hidden" id="reader"></div>`;
     h += `<div class="timer hidden" id="timer"></div>`;
     h += `<div id="checkinArea">${checkinHtml(day, status)}</div>`;
+    h += sermonHtml(d);
     h += `<p class="small muted" style="text-align:center;margin-top:18px">讀到不懂的地方？<a href="#notes/${day}">記在疑問本</a></p>`;
     view.innerHTML = `<div class="view">${h}</div>`;
 
@@ -134,13 +155,21 @@
     if (params.get('read') === '1') { params.delete('read'); openReader(day); }
   }
 
+  // This week's Sunday service: the reading leads up to it.
+  function sermonHtml(d) {
+    if (!d.theme) return '';
+    return `<div class="card sermon"><h2>本週主日・${md(d.sunday)}（${esc(d.service || '')}）</h2>
+      <div class="sermon-theme">${esc(d.theme)}</div>
+      <div class="small muted">講道經文：${esc(d.sermon || '')}</div></div>`;
+  }
+
   function checkinHtml(day, status) {
     if (READ.includes(status)) {
       return `<button class="btn block done" disabled>✓ ${STATUS_TEXT[status]}</button>
         ${canShare() ? '<button class="btn block ghost" id="shareBtn" style="margin-top:10px">分享到群組</button>' : ''}`;
     }
     if (S.todayDay < 1) return `<button class="btn block" disabled>開跑後就能蓋章</button>`;
-    if (status === 'future') return `<button class="btn block" disabled>還沒到第 ${day} 天</button>`;
+    if (status === 'future') return `<button class="btn block" disabled>${dname(day)}才能蓋章</button>`;
     const label = status === 'today' ? '我讀完了，蓋章！' : status === 'pending' ? '補讀完成，蓋章！'
       : status === 'before' ? '讀完了（加入前的進度）' : '讀完了（逾期補讀）';
     return `<button class="btn block" id="checkinBtn">${label}</button>`;
@@ -293,12 +322,13 @@
       return;
     }
     if (!r.ok) {
-      toast(r.error === 'already' ? '這天已經蓋過章了' : r.error === 'future' ? '還沒到這一天喔' : '沒有蓋成功，請再試一次');
-      if (r.record) S.me.record = Core.normalizeRecord(r.record, S.total);
+      toast(r.error === 'already' ? '這天已經蓋過章了' : r.error === 'future' ? '還沒到這一天喔'
+        : r.error === 'rest' ? '這天不用讀經喔' : '沒有蓋成功，請再試一次');
+      if (r.record) S.me.record = Core.normalizeRecord(r.record, S.total, S.mask);
       render();
       return;
     }
-    S.me.record = Core.normalizeRecord(r.record, S.total);
+    S.me.record = Core.normalizeRecord(r.record, S.total, S.mask);
     S.board = null;
     const st = Core.streak(S.me.record, S.todayDay, F());
     const defs = Core.badgeDefs(S.dayGroups, Books);
@@ -312,7 +342,7 @@
 
   function showStamp(stamp, streak, gained, cardFilled) {
     const cls = stamp === 'm' ? 'makeup' : stamp === 'l' ? 'late' : '';
-    const msg = stamp === 'o' ? `連勝 ${streak} 天！` : stamp === 'm' ? `補讀成功，連勝 ${streak} 天` : '完成！已計入全本進度';
+    const msg = stamp === 'o' ? `連勝 ${streak} 天！` : stamp === 'm' ? `補讀成功，連勝 ${streak} 天` : '完成！已計入' + SCOPE();
     const extra = [];
     if (cardFilled) extra.push('集滿一張集點卡了！');
     if (gained.length) extra.push('獲得徽章：' + gained.join('、'));
@@ -333,7 +363,7 @@
   }
   async function shareDay(day) {
     const st = Core.streak(S.me.record, S.todayDay, F());
-    const text = `✅ ${S.me.name} 讀完了第 ${day} 天：${S.days[day - 1].label}\n🔥 連勝 ${st.current} 天`;
+    const text = `✅ ${S.me.name} 讀完了 ${dname(day)}的進度：${S.days[day - 1].label}\n🔥 連勝 ${st.current} 天`;
     if (isMock) { toast('示範模式：正式版會由你本人把這段話送到群組。\n' + text, 4000); return; }
     try {
       await liff.sendMessages([{ type: 'text', text: text }]);
@@ -349,26 +379,29 @@
     const curIdx = Math.floor((curDay() - 1) / Core.CARD_SIZE) + 1;
     const idx = idxArg ? Math.min(Math.max(idxArg, 1), cards.length) : curIdx;
     const c = cards[idx - 1];
-    const filled = c.slots.filter(s => READ.includes(s.status)).length;
     const fullCount = cards.filter(x => x.full).length;
+    const firstWd = Core.weekday(S.days[c.from - 1].date);
+    const head = [0, 1, 2, 3, 4, 5, 6].map(i => '日一二三四五六'.charAt((firstWd + i) % 7));
     const slotInner = s => {
       const ch = Core.stampAt(S.me.record, s.day);
       if (READ.includes(s.status)) return STAMP_CHAR[ch];
+      if (s.status === 'rest') return S.days[s.day - 1].dow === 7 ? '主日' : '補讀';
       if (s.status === 'today') return '今';
       if (s.status === 'pending') return '待補';
-      return s.day;
+      return '';
     };
 
     let h = `<div class="card"><div class="card-head"><div>
         <div class="title">第 ${idx} 張集點卡</div>
-        <div class="small muted">${md(S.days[c.from - 1].date)} – ${md(S.days[c.to - 1].date)}　已集 <b class="num">${filled}</b> / ${c.slots.length}</div></div>
+        <div class="small muted">${md(S.days[c.from - 1].date)} – ${md(S.days[c.to - 1].date)}　已集 <b class="num">${c.filled}</b> / ${c.goal}</div></div>
       <div class="card-nav"><button data-go="#card/${idx - 1}" ${idx <= 1 ? 'disabled' : ''} aria-label="上一張">‹</button>
         <button data-go="#card/${idx + 1}" ${idx >= cards.length ? 'disabled' : ''} aria-label="下一張">›</button></div></div>
-      <div class="slots">${c.slots.map(s => `<button class="slot ${s.status}" data-day="${s.day}" aria-label="第 ${s.day} 天 ${STATUS_TEXT[s.status]}">
+      <div class="wk">${head.map(x => `<span>${x}</span>`).join('')}</div>
+      <div class="slots">${c.slots.map(s => `<button class="slot ${s.status}" data-day="${s.day}" aria-label="${dname(s.day)} ${STATUS_TEXT[s.status] || ''}">
         ${slotInner(s)}<small>${md(S.days[s.day - 1].date)}</small></button>`).join('')}</div>
       <div class="legend"><span><i style="background:var(--seal)"></i>準時</span><span><i style="background:var(--makeup)"></i>7 天內補讀</span>
         <span><i style="background:var(--late)"></i>逾期補完</span><span><i style="border:2px dashed var(--pending)"></i>待補讀</span></div></div>`;
-    h += `<p class="small muted" style="margin:4px 4px 0">21 天養成一個習慣，集滿一張就換下一張。目前已集滿 <b>${fullCount}</b> 張。
+    h += `<p class="small muted" style="margin:4px 4px 0">3 週養成一個習慣：每張卡是 3 週的讀經日，集滿就換下一張。目前已集滿 <b>${fullCount}</b> 張。
       <a href="#" id="rulesLink">怎麼玩？</a></p>`;
 
     const earned = Core.badges(S.me.record, S.todayDay, S.dayGroups, Books, F());
@@ -384,8 +417,9 @@
     $$('.slot', view).forEach(b => b.addEventListener('click', () => {
       const d = +b.dataset.day;
       const st = Core.dayStatus(S.me.record, d, S.todayDay, F());
-      if (st === 'future') toast(`第 ${d} 天（${md(S.days[d - 1].date)}）還沒到喔`);
-      else if (READ.includes(st)) toast(`第 ${d} 天 ${S.days[d - 1].label}：${STATUS_TEXT[st]}`);
+      if (st === 'rest') toast(`${dname(d)}${S.days[d - 1].label}，不用讀經`);
+      else if (st === 'future') toast(`${dname(d)}${S.days[d - 1].label}，還沒到喔`);
+      else if (READ.includes(st)) toast(`${dname(d)}${S.days[d - 1].label}：${STATUS_TEXT[st]}`);
       else go('#today/' + d);
     }));
     $('#rulesLink').addEventListener('click', e => { e.preventDefault(); openRules(); });
@@ -394,10 +428,10 @@
   function openRules() {
     openSheet(`<h2>怎麼玩？</h2>
       <ul style="padding-left:20px;line-height:1.9">
-        <li>每天讀完當天進度，按「我讀完了」蓋一個<b style="color:var(--seal)">紅章</b>，連勝 +1。</li>
+        <li>週一到週五每天一段，讀完按「我讀完了」蓋一個<b style="color:var(--seal)">紅章</b>，連勝 +1。週六是補讀日、主日聽道，這兩天不用讀，連勝也不會斷。</li>
         <li>太忙忘了？<b>7 天內補讀</b>會蓋<b style="color:var(--makeup)">橘章</b>，連勝不會斷。</li>
-        <li>超過 7 天才補，會蓋<b style="color:var(--late)">灰章</b>：算進全本進度，但連勝會重新計算。</li>
-        <li>每 21 天一張集點卡，集滿就換下一張。</li>
+        <li>超過 7 天才補，會蓋<b style="color:var(--late)">灰章</b>：算進${SCOPE()}，但連勝會重新計算。</li>
+        <li>每 3 週一張集點卡，集滿就換下一張。</li>
         <li>排行榜每 15 分鐘更新。個人連勝榜只公開前 10 名，你可以在個人設定選擇匿名。</li>
       </ul><button class="btn block" data-close>知道了</button>`);
   }
@@ -410,12 +444,13 @@
     const st = Core.streak(rec, td, F());
     let chaptersRead = 0;
     for (let d = 1; d <= S.total; d++) if (isReadDay(d)) chaptersRead += S.days[d - 1].chapters;
-    const behind = comp.elapsed - comp.done - (td >= 1 && td <= S.total && !isReadDay(td) ? 1 : 0);
+    const todayOpen = td >= 1 && td <= S.total && !isRestDay(td) && !isReadDay(td) ? 1 : 0;
+    const behind = comp.elapsed - comp.done - todayOpen;
     const missed = Core.missedDays(rec, td, F());
 
     let h = `<div class="stats" style="margin-top:12px">
       <div class="stat"><div class="v">${pct(comp.rate)}</div><div class="k">完成率（${comp.done} / ${comp.elapsed} 天）</div></div>
-      <div class="stat"><div class="v">${(chaptersRead / S.totalChapters * 100).toFixed(1)}%</div><div class="k">全本進度（${chaptersRead} 章）</div></div>
+      <div class="stat"><div class="v">${(chaptersRead / S.totalChapters * 100).toFixed(1)}%</div><div class="k">${SCOPE()}（${chaptersRead} 章）</div></div>
       <div class="stat"><div class="v">${st.current}</div><div class="k">目前連勝</div></div>
       <div class="stat"><div class="v">${st.longest}</div><div class="k">最長連勝</div></div></div>`;
     h += `<div class="card"><h2>${behind > 0 ? `落後 ${behind} 天，慢慢補就好` : '進度剛剛好 👍'}</h2>
@@ -423,12 +458,12 @@
       <div class="months">${[1, 3, 5, 7, 9, 11].map(m => `<span>${m}月</span>`).join('')}</div></div>`;
     if (st.pending.length) {
       h += `<div class="section-title">待補讀（7 天內補完，連勝不斷）</div><div class="card"><ul class="todo-list">${st.pending.map(d =>
-        `<li><div><div>${esc(S.days[d - 1].label)}</div><div class="when">第 ${d} 天・${md(S.days[d - 1].date)}・還剩 ${Core.MAKEUP_WINDOW - (td - d)} 天</div></div>
+        `<li><div><div>${esc(S.days[d - 1].label)}</div><div class="when">${dname(d)}・還剩 ${Core.MAKEUP_WINDOW - (td - d)} 天</div></div>
         <button data-go="#today/${d}">補讀</button></li>`).join('')}</ul></div>`;
     }
     if (missed.length) {
-      h += `<div class="section-title">已錯過（${missed.length} 天，讀了仍會計入全本進度）</div><div class="card"><ul class="todo-list">${missed.slice(-20).reverse().map(d =>
-        `<li><div><div>${esc(S.days[d - 1].label)}</div><div class="when">第 ${d} 天・${md(S.days[d - 1].date)}</div></div>
+      h += `<div class="section-title">已錯過（${missed.length} 天，讀了仍會計入${SCOPE()}）</div><div class="card"><ul class="todo-list">${missed.slice(-20).reverse().map(d =>
+        `<li><div><div>${esc(S.days[d - 1].label)}</div><div class="when">${dname(d)}</div></div>
         <button data-go="#today/${d}">讀</button></li>`).join('')}</ul>
         ${missed.length > 20 ? `<p class="small muted">只列出最近 20 天</p>` : ''}</div>`;
     }
@@ -456,7 +491,7 @@
     const times = t.chapters / t.planChapters;
     let h = `<div class="card"><h2>全教會一起讀了</h2>
       <div class="big-total">${t.chapters.toLocaleString()} <span style="font-size:18px">章</span></div>
-      <div class="small muted">${times >= 1 ? `相當於讀完整本聖經 ${times.toFixed(1)} 遍` : `相當於整本聖經的 ${Math.round(times * 100)}%`}・${t.members} 人參加・今天已有 <b>${t.readersToday}</b> 人蓋章</div></div>`;
+      <div class="small muted">${times >= 1 ? `相當於讀完${S.plan.scope || '整本聖經'} ${times.toFixed(1)} 遍` : `相當於${S.plan.scope || '整本聖經'}的 ${Math.round(times * 100)}%`}・${t.members} 人參加・今天已有 <b>${t.readersToday}</b> 人蓋章</div></div>`;
 
     h += `<div class="section-title">小組榜（完成率）</div><div class="card"><ul class="rank-list">${B.groups.map((g, i) =>
       `<li class="group-row ${g.group === myGroup ? 'me' : ''}"><div class="r ${i < 3 ? 'top' + (i + 1) : ''}">${i + 1}</div>
@@ -482,15 +517,16 @@
     const sel = dayArg ? clampDay(dayArg) : last;
     const options = [];
     for (let d = last; d >= 1; d--) {
-      options.push(`<option value="${d}" ${d === sel ? 'selected' : ''}>第 ${d} 天・${md(S.days[d - 1].date)}・${esc(S.days[d - 1].label)}</option>`);
+      if (isRestDay(d)) continue;
+      options.push(`<option value="${d}" ${d === sel ? 'selected' : ''}>${dname(d)}・${esc(S.days[d - 1].label)}</option>`);
     }
     let h = `<div class="card"><h2>記下不懂的地方</h2>
       <div class="field"><span>讀到哪裡</span><select id="qDay">${options.join('')}</select></div>
-      <div class="field"><span>你的問題</span><textarea id="qText" maxlength="500" placeholder="例如：第 6 章說的「神的兒子們」是誰？"></textarea></div>
+      <div class="field"><span>你的問題</span><textarea id="qText" maxlength="500" placeholder="例如：太 5 章說「虛心的人有福了」，虛心是什麼意思？"></textarea></div>
       <label class="check"><input type="checkbox" id="qShared" checked>讓牧師和小組長看到</label>
       <button class="btn block" id="qSave">存進疑問本</button></div>`;
     h += `<div class="section-title">我的疑問本</div><div class="card">${S.questions.length ? S.questions.map(q => `<div class="q">
-        <div class="head"><span>第 ${q.day} 天・${esc(S.days[q.day - 1] ? S.days[q.day - 1].label : '')}</span><span>${q.shared ? '已分享給牧師' : '只有自己看得到'}</span></div>
+        <div class="head"><span>${S.days[q.day - 1] ? dname(q.day) + '・' + esc(S.days[q.day - 1].label) : ''}</span><span>${q.shared ? '已分享給牧師' : '只有自己看得到'}</span></div>
         <div class="text">${esc(q.text)}</div>
         ${q.reply ? `<div class="reply"><b>牧師回覆</b>${esc(q.reply)}</div>` : ''}</div>`).join('')
       : '<p class="muted small">還沒有問題。讀經時卡住的地方記下來，小組時可以一起討論。</p>'}</div>`;
@@ -594,7 +630,7 @@
       try { sessionStorage.removeItem('brq-auth-retry'); } catch (x) { /* ignore */ }
       if (isMock) {
         const demo = $('#demo');
-        demo.innerHTML = `示範模式・模擬日期 ${S.today}（第 ${S.todayDay} 天）・資料只存在這支手機・<a href="#" id="demoReset">重設</a>`;
+        demo.innerHTML = `示範模式・模擬日期 ${S.today}（${wd1(S.today)}）・資料只存在這支手機・<a href="#" id="demoReset">重設</a>`;
         demo.classList.remove('hidden');
         $('#demoReset').addEventListener('click', e => {
           e.preventDefault();
